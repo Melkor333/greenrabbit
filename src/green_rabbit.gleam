@@ -18,7 +18,7 @@ type Model {
   //  refresh_token: String,
   //  csrf_token: String,
   //)
-  Login(login.LoginForm)
+  Login(login.Login)
 }
 
 type Msg {
@@ -31,9 +31,7 @@ type Msg {
 fn update(m: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
     // transition to logged-in page!
-    LoginMsg(login.LoginRequestReturned(Ok(cred))) -> todo
     LoginMsg(login_msg) -> {
-      // TODO: Can this happen when already loggedin? E.g. "loggedout"
       let Login(form) = m
       let #(form, effect) = login.update(form, login_msg)
       #(Login(form), effect.map(effect, fn(m) { LoginMsg(m) }))
@@ -44,7 +42,9 @@ fn update(m: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
 fn init(_args) {
   #(
-    Login(login.LoginForm(login.login_form(), True, "localhost:1234/")),
+    Login(
+      login.LoginForm(login.login_form(), True, "http://localhost:4000", []),
+    ),
     effect.none(),
   )
 }
@@ -52,6 +52,7 @@ fn init(_args) {
 fn view(m) {
   html.div([], [
     case m {
+      Login(login.Credentials(..)) -> html.text("Logged in!")
       Login(form) -> element.map(login.view(form), fn(e) { LoginMsg(e) })
     },
   ])
