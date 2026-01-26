@@ -41,12 +41,7 @@ fn update(m: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 }
 
 fn init(_args) {
-  #(
-    Login(
-      login.LoginForm(login.login_form(), True, "http://localhost:4000", []),
-    ),
-    effect.none(),
-  )
+  #(Login(login.init("http://localhost:4000")), effect.none())
 }
 
 fn view(m) {

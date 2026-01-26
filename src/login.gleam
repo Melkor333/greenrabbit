@@ -4,11 +4,13 @@ import gleam/http/response.{type Response}
 import gleam/int
 import gleam/json
 import gleam/list
+import gleam/result
 import lustre/attribute
 import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
 import lustre/event
+import plinth/javascript/storage
 import rsvp
 
 pub type Login {
@@ -69,18 +71,74 @@ pub type LoginData {
   LoginData(mail: String, password: String)
 }
 
-pub fn login_form() -> Form(LoginData) {
-  form.new({
-    use mail <- form.field("mail", form.parse_email)
-    // TODO: min 8, etc.
-    use password <- form.field(
-      "password",
-      form.parse_string
-        |> form.check_not_empty,
-    )
+pub fn new_credentials(
+  email email,
+  url url,
+  auth_token auth_token,
+  refresh_token refresh_token,
+  csrf_token csrf_token,
+) {
+  let c = Credentials(email:, url:, auth_token:, refresh_token:, csrf_token:)
+  set_local_cred(c)
+  c
+}
 
-    form.success(LoginData(mail:, password:))
-  })
+fn set_local_cred(l: Login) -> Result(Nil, Nil) {
+  let assert Credentials(..) = l
+  use store <- result.try(storage.local())
+  use _ <- result.try(storage.set_item(store, "trailbase_url", l.url))
+  use _ <- result.try(storage.set_item(store, "trailbase_email", l.email))
+  use _ <- result.try(storage.set_item(
+    store,
+    "trailbase_auth_token",
+    l.auth_token,
+  ))
+  use _ <- result.try(storage.set_item(
+    store,
+    "trailbase_refresh_token",
+    l.refresh_token,
+  ))
+  use _ <- result.try(storage.set_item(
+    store,
+    "trailbase_csrf_token",
+    l.csrf_token,
+  ))
+  Ok(Nil)
+}
+
+fn get_local_cred() -> Result(Login, Nil) {
+  use store <- result.try(storage.local())
+  use url <- result.try(storage.get_item(store, "trailbase_url"))
+  use email <- result.try(storage.get_item(store, "trailbase_email"))
+  use auth_token <- result.try(storage.get_item(store, "trailbase_auth_token"))
+  use refresh_token <- result.try(storage.get_item(
+    store,
+    "trailbase_refresh_token",
+  ))
+  use csrf_token <- result.try(storage.get_item(store, "trailbase_csrf_token"))
+  Ok(new_credentials(email:, url:, auth_token:, refresh_token:, csrf_token:))
+}
+
+pub fn init(url) -> Login {
+  result.unwrap(
+    get_local_cred(),
+    LoginForm(
+      form.new({
+        use mail <- form.field("mail", form.parse_email)
+        // TODO: min 8, etc.
+        use password <- form.field(
+          "password",
+          form.parse_string
+            |> form.check_not_empty,
+        )
+
+        form.success(LoginData(mail:, password:))
+      }),
+      True,
+      url,
+      [],
+    ),
+  )
 }
 
 // show the form
@@ -163,7 +221,7 @@ fn decode_login(url, email) {
   use auth_token <- decode.field("auth_token", decode.string)
   use refresh_token <- decode.field("refresh_token", decode.string)
   use csrf_token <- decode.field("csrf_token", decode.string)
-  decode.success(Credentials(
+  decode.success(new_credentials(
     email:,
     url:,
     auth_token:,
