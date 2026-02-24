@@ -1,231 +1,85 @@
+import credentials.{type Credentials}
 import formal/form.{type Form}
 import gleam/dynamic/decode
-import gleam/http/response.{type Response}
-import gleam/int
+import gleam/http/request
 import gleam/json
-import gleam/list
+import gleam/option.{type Option}
 import gleam/result
-import lustre/attribute
 import lustre/effect.{type Effect}
-import lustre/element.{type Element}
-import lustre/element/html
-import lustre/event
-import plinth/javascript/storage
 import rsvp
 
-pub type Login {
+pub type LoginForm {
   LoginForm(
     form: Form(LoginData),
     active: Bool,
     url: String,
     errors: List(rsvp.Error),
   )
-  Credentials(
-    url: String,
-    email: String,
-    auth_token: String,
-    refresh_token: String,
-    csrf_token: String,
-  )
-}
-
-pub type LoginMsg {
-  UserPressedLogin(Result(LoginData, Form(LoginData)))
-  LoginRequestReturned(Result(Login, rsvp.Error))
-  // TODO: UserLoggedOut
-}
-
-// TODO: Add a onSuccess return value?
-pub fn update(m: Login, msg: LoginMsg) -> #(Login, Effect(LoginMsg)) {
-  case msg {
-    // Lock form
-    UserPressedLogin(Ok(LoginData(mail, password), ..)) ->
-      case m {
-        LoginForm(..) -> #(
-          LoginForm(..m, active: False),
-          login_effect(m.url, mail, password),
-        )
-        Credentials(..) -> {
-          echo "already logged in!"
-          #(m, effect.none())
-        }
-      }
-    UserPressedLogin(Error(form)) -> {
-      // TODO: do nothing if `Credential'?`
-      let assert LoginForm(..) = m
-      #(
-        LoginForm(form:, active: True, url: m.url, errors: m.errors),
-        effect.none(),
-      )
-    }
-    //UserPressedSignup -> #(m, login(msg.mail, msg.password))
-    LoginRequestReturned(Ok(cred)) -> #(cred, effect.none())
-    LoginRequestReturned(Error(e)) -> {
-      let assert LoginForm(..) = m
-      #(LoginForm(..m, active: True, errors: [e, ..m.errors]), effect.none())
-    }
-  }
 }
 
 pub type LoginData {
-  LoginData(mail: String, password: String)
+  LoginData(email: String, password: String)
 }
 
-pub fn new_credentials(
-  email email,
-  url url,
-  auth_token auth_token,
-  refresh_token refresh_token,
-  csrf_token csrf_token,
-) {
-  let c = Credentials(email:, url:, auth_token:, refresh_token:, csrf_token:)
-  set_local_cred(c)
-  c
-}
+pub fn new(url) -> LoginForm {
+  LoginForm(
+    form.new({
+      use email <- form.field("email", form.parse_email)
+      // TODO: min 8, etc.
+      use password <- form.field(
+        "password",
+        form.parse_string
+          |> form.check_not_empty,
+      )
 
-fn set_local_cred(l: Login) -> Result(Nil, Nil) {
-  let assert Credentials(..) = l
-  use store <- result.try(storage.local())
-  use _ <- result.try(storage.set_item(store, "trailbase_url", l.url))
-  use _ <- result.try(storage.set_item(store, "trailbase_email", l.email))
-  use _ <- result.try(storage.set_item(
-    store,
-    "trailbase_auth_token",
-    l.auth_token,
-  ))
-  use _ <- result.try(storage.set_item(
-    store,
-    "trailbase_refresh_token",
-    l.refresh_token,
-  ))
-  use _ <- result.try(storage.set_item(
-    store,
-    "trailbase_csrf_token",
-    l.csrf_token,
-  ))
-  Ok(Nil)
-}
-
-fn get_local_cred() -> Result(Login, Nil) {
-  use store <- result.try(storage.local())
-  use url <- result.try(storage.get_item(store, "trailbase_url"))
-  use email <- result.try(storage.get_item(store, "trailbase_email"))
-  use auth_token <- result.try(storage.get_item(store, "trailbase_auth_token"))
-  use refresh_token <- result.try(storage.get_item(
-    store,
-    "trailbase_refresh_token",
-  ))
-  use csrf_token <- result.try(storage.get_item(store, "trailbase_csrf_token"))
-  Ok(new_credentials(email:, url:, auth_token:, refresh_token:, csrf_token:))
-}
-
-pub fn init(url) -> Login {
-  result.unwrap(
-    get_local_cred(),
-    LoginForm(
-      form.new({
-        use mail <- form.field("mail", form.parse_email)
-        // TODO: min 8, etc.
-        use password <- form.field(
-          "password",
-          form.parse_string
-            |> form.check_not_empty,
-        )
-
-        form.success(LoginData(mail:, password:))
-      }),
-      True,
-      url,
-      [],
-    ),
+      form.success(LoginData(email:, password:))
+    }),
+    True,
+    url,
+    [],
   )
 }
 
-// show the form
-pub fn view(m: Login) -> Element(LoginMsg) {
-  case m {
-    LoginForm(..) -> {
-      let form = m.form
-      let handle_submit = fn(val) {
-        form |> form.add_values(val) |> form.run() |> UserPressedLogin
-      }
-
-      html.form([event.on_submit(handle_submit)], [
-        html.h1([], [html.text("Login")]),
-        input_field(
-          errors: form.field_error_messages(form, "mail"),
-          is: "text",
-          name: "mail",
-          label: "Mail address",
-          readonly: !m.active,
-        ),
-        input_field(
-          errors: form.field_error_messages(form, "password"),
-          is: "password",
-          name: "password",
-          label: "Password",
-          readonly: !m.active,
-        ),
-        html.div([], [html.button([], [html.text("Login")])]),
-        ..list.map(m.errors, fn(s: _type) {
-          html.p([], [html.text(rsvp_to_string(s))])
-        })
-      ])
-    }
-    Credentials(..) -> element.none()
-  }
-}
-
-fn rsvp_to_string(e: rsvp.Error) {
-  case e {
-    rsvp.BadBody(..) -> "Response was not valid!?"
-    rsvp.BadUrl(s) -> "bad url: " <> s
-    rsvp.HttpError(r) ->
-      "Bad response(" <> int.to_string(r.status) <> "): " <> r.body
-    rsvp.JsonError(..) -> "Bad Json response!"
-    rsvp.NetworkError -> "Network issue"
-    rsvp.UnhandledResponse(..) -> "Return value wasn't json!"
-  }
-}
-
-fn input_field(
-  errors errors,
-  is type_: String,
-  name name: String,
-  label label: String,
-  readonly readonly: Bool,
-) {
-  html.div([], [
-    html.label([attribute.for(name)], [html.text(label), html.text(": ")]),
-    html.input([
-      attribute.type_(type_),
-      attribute.id(name),
-      attribute.name(name),
-      attribute.readonly(readonly),
-    ]),
-    ..list.map(errors, fn(s) { html.p([], [html.text(s)]) })
-  ])
-}
-
-fn login_effect(url, email, password) {
-  let req =
-    json.object([
-      #("email", json.string(email)),
-      #("password", json.string(password)),
-    ])
-  let handler = rsvp.expect_json(decode_login(url, email), LoginRequestReturned)
-  rsvp.post(url <> "/api/auth/v1/login", req, handler)
-}
-
-fn decode_login(url, email) {
+/// Decode the response of the login via API
+fn decode_login(url, email) -> decode.Decoder(Credentials) {
   use auth_token <- decode.field("auth_token", decode.string)
   use refresh_token <- decode.field("refresh_token", decode.string)
   use csrf_token <- decode.field("csrf_token", decode.string)
-  decode.success(new_credentials(
+  decode.success(credentials.new(
     email:,
     url:,
     auth_token:,
     refresh_token:,
     csrf_token:,
   ))
+}
+
+/// An effect that tries to log in with the credentials from the form
+pub fn login_effect(
+  url,
+  email,
+  password,
+  msg: fn(Result(Credentials, rsvp.Error)) -> msg_type,
+) -> Effect(msg_type) {
+  let req =
+    json.object([
+      #("email", json.string(email)),
+      #("password", json.string(password)),
+    ])
+  let handler = rsvp.expect_json(decode_login(url, email), msg)
+  rsvp.post(url <> "/api/auth/v1/login", req, handler)
+}
+
+pub fn test_credentials(
+  cred: Credentials,
+  msg: fn(Result(Credentials, rsvp.Error)) -> msg,
+) -> Effect(msg) {
+  let handler = rsvp.expect_json(decode_login(cred.url, cred.email), msg)
+  rsvp.send(
+    request.new()
+      |> request.set_host(cred.url)
+      |> request.set_path("/api/auth/v1/status")
+      |> credentials.set_auth_headers(cred),
+    handler,
+  )
 }

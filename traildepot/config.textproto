@@ -1,0 +1,20 @@
+# Auto-generated config.Config textproto
+email {}
+server {
+  application_name: "TrailBase"
+  logs_retention_sec: 604800
+}
+auth {
+  auth_token_ttl_sec: 3600
+  refresh_token_ttl_sec: 2592000
+}
+jobs {}
+record_apis: [{
+  name: "cookies"
+  table_name: "cookies"
+  conflict_resolution: ROLLBACK
+  autofill_missing_user_id_columns: true
+  acl_authenticated: [READ]
+  enable_subscriptions: true
+  read_access_rule: "EXISTS(SELECT 1 from cookies WHERE user = _USER_.id)"
+}]
